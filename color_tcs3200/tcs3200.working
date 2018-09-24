@@ -1,0 +1,262 @@
+/*
+Adapted from some code at reibot.org. Lots of cleaning up...
+ Demo program for TCS3200 from parallax and the parallax daughterboard
+ Call detectColor(out) where 'out' is pinC on the daughterboard. The detectColor will return a 0 if there is nothing color in front of sensor,
+ 1 if red is in front, 2 if blue is in front, or 3 if blue is in front. You can comment out all the serial.print.
+ If you're tight on pins, remove the taosMode(int) method and all references to it. Remove pins from the TCS3200setup too.
+ If these wires are disconnected the TCS3200 will run on the highest frequency due to internal pullup resistors on S0 and S1
+ If you have multiple TCS3200 you may tie all the pins together except the outputs (pinC). Then just use detectColor(TCS3200's output) to
+ detect color on the selected TCS3200's output pin.
+ 7/6/2011 works on arduino 0022
+ Taos pins connect to arduino pins 8-13. There is no order and should work on any digital i/o
+ */
+ 
+void PrintMatrix(const TMatrix<double>& m)
+{
+  for(int i = 0; i < m.CountRows(); i++)
+  {
+    for(int j = 0; j < m.CountColumns(); j++)
+    {
+      Serial.print(m[i][j]);
+      Serial.print('\t');
+    }
+    Serial.print('\n');
+  }
+}
+
+#define PRESENCE_TOLERANCE 5
+
+enum LED_STATE {DARK, LIGHT};
+enum COLOR {NOT_PRESENT = -1, RED, GREEN, BLUE, WHITE};
+enum TCS_MODE {OFF, FULL, FIVE_TO_ONE, TWENTY_TO_ONE};
+
+#define SENSOR_READS 10
+#define SENSOR_DELAY 10
+
+class TCS3200
+{
+  //pins on the TCS3200 breakout:
+  int pS0, pS1, pS2, pS3;
+  int outPin;
+  int ledPin;
+
+  TMatrix<double> rgbInverse;
+
+public:
+  TCS3200(int s0, int s1, int s2, int s3, int out, int led) :
+  rgbInverse(3,3)
+  {
+    pS0 = s0;
+    pS1 = s1;
+    pS2 = s2;
+    pS3 = s3;
+    outPin = out;
+    ledPin = led;
+  }
+
+  void Setup(void);
+  void CalibrateRGBMatrix(void);
+  
+  COLOR DetectColor(TVector<double>&);
+  double ReadColor(COLOR, LED_STATE, TCS_MODE = TWENTY_TO_ONE);
+  void SetTCSMode(TCS_MODE);
+
+};
+
+COLOR TCS3200::DetectColor(TVector<double>& rgb)
+{
+  //isPresentTolerance will need to be something small if used in high light environment, large if used in dark environment.
+  //the color detection will work either way, but the larger isPresentTolerance is, the closer the object will need to be in front of sensor
+  double isPresent = ReadColor(WHITE, DARK) / ReadColor(WHITE, LIGHT);//number gets large when something is in front of sensor.
+  if(isPresent < PRESENCE_TOLERANCE){
+    Serial.println("Nothing present.");
+    return NOT_PRESENT;
+  }
+
+  double white = ReadColor(WHITE, LIGHT);
+  double red = ReadColor(RED, LIGHT);
+  double green = ReadColor(GREEN, LIGHT);
+  double blue = ReadColor(BLUE, LIGHT);
+
+  rgb[RED] = red / white;
+  rgb[GREEN] = green / white;
+  rgb[BLUE] = blue / white;
+  
+  Serial.println("White\tRed\tGreen\tBlue");
+  Serial.print(white);
+  Serial.print('\t');
+  Serial.print(red);
+  Serial.print('\t');
+  Serial.print(green);
+  Serial.print('\t');
+  Serial.println(blue);
+  
+  TVector<double> estimate = rgbInverse * rgb;
+  Serial.print("Est.:");
+  Serial.print('\t');
+  Serial.print(estimate[RED]);
+  Serial.print('\t');
+  Serial.print(estimate[GREEN]);
+  Serial.print('\t');
+  Serial.print(estimate[BLUE]);
+  Serial.print('\n');
+  
+  return WHITE;
+}
+/*
+This method will return the pulseIn reading of the selected color.
+ Since frequency is proportional to light intensity of the selected color filter,
+ the smaller pulseIn is, the more light there is of the selected color filter.
+ It will turn on the sensor at the start taosMode(1), and it will power off the sensor at the end taosMode(0)
+ color: 0=white, 1=red, 2=blue, 3=green
+ if LEDstate is 0, LED will be off. 1 and the LED will be on.
+ taosOutPin is the ouput of the TCS3200. If you have multiple TCS3200, all wires can be combined except the out pin
+ */
+double TCS3200::ReadColor(COLOR color, LED_STATE LEDstate, TCS_MODE tcsMode)
+{
+  //make sure that the pin is set to input
+  pinMode(outPin, INPUT);
+
+  //turn on sensor with highest frequency setting
+  SetTCSMode(tcsMode);
+  
+  //set the pins to select the color
+  if(color == WHITE){
+    digitalWrite(pS3, LOW); //S3
+    digitalWrite(pS2, HIGH); //S2
+  }
+  else if(color == RED){//red
+    digitalWrite(pS3, LOW); //S3
+    digitalWrite(pS2, LOW); //S2
+  }
+  else if(color == GREEN){//blue
+    digitalWrite(pS3, HIGH); //S3
+    digitalWrite(pS2, HIGH); //S2
+  }
+  else if(color == BLUE){//green
+    digitalWrite(pS3, HIGH); //S3
+    digitalWrite(pS2, LOW); //S2
+  }
+  
+  if(LEDstate == DARK){
+    digitalWrite(ledPin, LOW);
+  }
+  else{
+    digitalWrite(ledPin, HIGH);
+  }
+
+  delay(SENSOR_DELAY);
+
+  double pulseLength = 0;  
+  for(int i = 0; i < SENSOR_READS; i++)
+  {
+    double readPulse = pulseIn(outPin, LOW, 80000);
+    //if the pulseIn times out, it returns 0 and that throws off numbers. just cap it at 80k if it happens
+    if(readPulse < .1){
+      readPulse = 80000;
+    }
+    
+    pulseLength += readPulse;
+  }
+  
+  pulseLength /= SENSOR_READS;
+
+  //turn off color sensor and white LED to save power
+  SetTCSMode(OFF);
+
+  return pulseLength;
+}
+
+//setting mode to zero will put taos into low power mode. taosMode(0);
+void TCS3200::SetTCSMode(TCS_MODE mode)
+{
+  if(mode == FULL){
+    //this will put in 1:1
+    digitalWrite(pS0, HIGH); //S0
+    digitalWrite(pS1, HIGH); //S1
+    // Serial.println("m1:1m");
+  }
+  else if(mode == FIVE_TO_ONE){
+    //this will put in 1:5
+    digitalWrite(pS0, HIGH); //S0
+    digitalWrite(pS1, LOW); //S1
+    //Serial.println("m1:5m");
+  }
+  else if(mode == TWENTY_TO_ONE){
+    //this will put in 1:50
+    digitalWrite(pS0, LOW); //S0
+    digitalWrite(pS1, HIGH); //S1
+    //Serial.println("m1:50m");
+  }
+  else{
+    //power OFF
+    digitalWrite(ledPin, LOW);
+    digitalWrite(pS0, LOW); //S0
+    digitalWrite(pS1, LOW); //S1
+    // Serial.println("mOFFm");
+  }
+}
+
+void TCS3200::Setup(void){
+  //initialize pins
+  pinMode(ledPin,OUTPUT); //LED pinD
+  
+  //color mode selection
+  pinMode(pS2,OUTPUT); //S2 pinE
+  pinMode(pS3,OUTPUT); //s3 pinF
+  
+  //color response pin (only actual input from taos)
+  //pinMode(out, INPUT); //out pinC
+  //communication freq output divider
+  pinMode(pS0,OUTPUT); //S0 pinB
+  pinMode(pS1,OUTPUT); //S1 pinA
+}
+
+void TCS3200::CalibrateRGBMatrix(void)
+{
+  TMatrix<double> rgbMatrix(3,3);
+  TVector<double> rgb(3);
+  
+  while(DetectColor(rgb) == NOT_PRESENT)
+  {
+    Serial.println("Place RED in front of the sensor.");
+    delay(1000);
+  }
+
+  rgbMatrix.SetColumn(RED, rgb);
+
+  delay(3000);
+
+  while(DetectColor(rgb) == NOT_PRESENT)
+  {
+    Serial.println("Place GREEN in front of the sensor.");
+    delay(1000);
+  }
+
+  rgbMatrix.SetColumn(GREEN, rgb);
+
+  delay(3000);
+
+  while(DetectColor(rgb) == NOT_PRESENT)
+  {
+    Serial.println("Place BLUE in front of the sensor.");
+    delay(1000);
+  }
+
+  rgbMatrix.SetColumn(BLUE, rgb);
+
+  delay(3000);
+
+  Serial.print("\n\n");
+
+  PrintMatrix(rgbMatrix);
+  Serial.print("\n\n");
+  
+  rgbInverse = rgbMatrix.FindInverse(); 
+  PrintMatrix(rgbInverse);
+  
+  Serial.println("Calibration complete.");
+  delay(1000);
+}
+
+
