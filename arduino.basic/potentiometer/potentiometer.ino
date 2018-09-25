@@ -1,8 +1,10 @@
 const int potPin = A0;
+const int ledPin = 11;
 
 void setup() 
 {
-  pinMode(A0, INPUT);
+  pinMode(ledPin, OUTPUT);
+  pinMode(potPin, INPUT);
 }
 
 void loop() 

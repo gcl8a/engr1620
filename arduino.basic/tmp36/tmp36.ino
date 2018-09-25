@@ -4,15 +4,15 @@ void setup()
 {
   Serial.begin(9600);
 
-  pinMode(A1, INPUT);
+  pinMode(tmp36pin, INPUT);
 }
 
 void loop() 
 {
   int adcValue = analogRead(tmp36pin);
   
-  float voltage = 0;
-  float temperature = 0;
+  float voltage = 0;      //to be edited by the student!
+  float temperature = 0;  //to be edited by the student!
 
   Serial.print(adcValue);
   Serial.println();

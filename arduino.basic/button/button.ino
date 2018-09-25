@@ -13,7 +13,7 @@ void loop()
   int buttonState = digitalRead(buttonPin);
 
   // check if the pushbutton is pressed.
-  // if it is, the buttonState is HIGH:
+  // if it is, the buttonState is LOW (inverted logic!):
   if (buttonState == LOW) 
   {     
     // turn LED on:    
